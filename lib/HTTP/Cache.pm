@@ -161,11 +161,11 @@ sub init {
   $noupdateimpatientfudgefactor = defined( $arg->{NoUpdateImpatientFudgeFactor} )
     ? $arg->{NoUpdateImpatientFudgeFactor} : 2;
   $approvecontent = $arg->{ApproveContent} || sub { return 1; };
-
+  
   # Make sure that LWP::Simple does not use its simplified
   # get-method that bypasses LWP::UserAgent. 
   $LWP::Simple::FULL_LWP++;
-
+  
   unless ($initialized++) {
   $org_simple_request = \&LWP::UserAgent::simple_request;
 
@@ -586,17 +586,20 @@ cache object was last requested by a user.
 
 =head1 AUTHOR
 
-Mattias Holmlund, E<lt>$firstname -at- $lastname -dot- seE<gt>
-L<http://www.holmlund.se/mattias/>
+Darren Embry, E<lt>dse -at- sdf -dot- org<gt>
+L<http://webonastick.com/>
 
 =head1 GIT REPOSITORY
 
 A git repository containing the source for this module can be found
-via https://github.com/mattiash/HTTP-Cache-Transparent
+via https://github.com/dse/HTTP-Cache
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2004-2007 by Mattias Holmlund
+Copyright (C) 2014 Darren Embry
+
+Based on the HTTP::Cache::Transparent module, Copyright (C) 2004-2007
+by Mattias Holmlund
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,

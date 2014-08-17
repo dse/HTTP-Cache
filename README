@@ -1,6 +1,6 @@
-# HTTP-Cache-Transparent
+# HTTP-Cache
 
-HTTP::Cache::Transparent is an implementation of http get that keeps a local 
+HTTP::Cache is an implementation of http get that keeps a local 
 cache of fetched pages to avoid fetching the same data from the server 
 if it hasn't been updated. The cache is stored on disk and is thus 
 persistent between invocations.
@@ -8,8 +8,9 @@ persistent between invocations.
 The http-headers If-Modified-Since and ETag are used to let the server
 decide if the version in the cache is up-to-date or not.
 
-HTTP::Cache::Transparent was initially called HTTP::TransparentCache. It
-was renamed on request from modules@perl.org.
+HTTP::Cache is based on HTTP::Cache::Transparent.  Instead of
+monkey-patching LWP::UserAgent, it monkey-patches individual
+LWP::UserAgent objects.
 
 ## Limitations
 
@@ -38,12 +39,15 @@ url.
 
 ## Git repository
 
-A git repository with the sourcecode for HTTP::Cache::Transparent can
-be found at https://github.com/mattiash/HTTP-Cache-Transparent.
+A git repository with the sourcecode for HTTP::Cache can
+be found at https://github.com/dse/HTTP-Cache.
 
 ## Copyright and license
 
-Copyright (C) 2004-2007 by Mattias Holmlund
+Copyright (C) 2014 Darren Embry
+
+Based on the HTTP::Cache::Transparent module, Copyright (C) 2004-2007
+by Mattias Holmlund
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.8.4 or,
