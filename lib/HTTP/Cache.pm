@@ -1,4 +1,4 @@
-package HTTP::Cache::Transparent;
+package HTTP::Cache;
 
 use strict;
 
@@ -6,14 +6,14 @@ our $VERSION = '1.1';
 
 =head1 NAME
 
-HTTP::Cache::Transparent - Cache the result of http get-requests persistently.
+HTTP::Cache - Cache the result of http get-requests persistently.
 
 =head1 SYNOPSIS
 
   use LWP::Simple;
-  use HTTP::Cache::Transparent;
+  use HTTP::Cache;
 
-  HTTP::Cache::Transparent::init( {
+  HTTP::Cache::init( {
     BasePath => '/tmp/cache',
   } );
 
@@ -34,7 +34,7 @@ seamlessly cache the result of all requests that can be cached.
 
 =head1 INITIALIZING THE CACHE
 
-HTTP::Cache::Transparent provides an init-method that sets the
+HTTP::Cache provides an init-method that sets the
 parameters for the cache and overloads a method in LWP::UserAgent
 to activate the cache.After init has been called, the normal 
 LWP-methods (LWP::Simple as well as the more full-fledged 
@@ -76,7 +76,7 @@ my $org_simple_request;
 Initialize the HTTP cache. Takes a single parameter which is a 
 hashref containing named arguments to the object.
 
-  HTTP::Cache::Transparent::init( { 
+  HTTP::Cache::init( { 
 
     # Directory to store the cache in. 
     BasePath  => "/tmp/cache", 
@@ -129,7 +129,7 @@ hashref containing named arguments to the object.
  } );
 
 The directory where the cache is stored must be writable. It must also only
-contain files created by HTTP::Cache::Transparent.
+contain files created by HTTP::Cache.
 
 =cut 
 
@@ -176,23 +176,23 @@ sub init {
 
 =item Initializing from use-line
 
-An alternative way of initializing HTTP::Cache::Transparent is to supply
+An alternative way of initializing HTTP::Cache is to supply
 parameters in the use-line. This allows you to write
 
-  use HTTP::Cache::Transparent ( BasePath => '/tmp/cache' );
+  use HTTP::Cache ( BasePath => '/tmp/cache' );
 
 which is exactly equivalent to
 
-  use HTTP::Cache::Transparent;
-  HTTP::Cache::Transparent::init( BasePath => '/tmp/cache' );
+  use HTTP::Cache;
+  HTTP::Cache::init( BasePath => '/tmp/cache' );
 
 The advantage to using this method is that you can do
 
-  perl -MHTTP::Cache::Transparent=BasePath,/tmp/cache myscript.pl
+  perl -MHTTP::Cache=BasePath,/tmp/cache myscript.pl
 
 or even set the environment variable PERL5OPT 
   
-  PERL5OPT=-MHTTP::Cache::Transparent=BasePath,/tmp/cache
+  PERL5OPT=-MHTTP::Cache=BasePath,/tmp/cache
   myscript.pl
 
 and have all the http-requests performed by myscript.pl go through the
@@ -206,7 +206,7 @@ sub import {
   my( $module, %args ) = @_;
   return if (scalar(keys(%args)) == 0);
 
-  HTTP::Cache::Transparent::init( \%args );
+  HTTP::Cache::init( \%args );
 }
 
 END {
@@ -375,7 +375,7 @@ sub _get_from_cachefile {
     $res->content( $content );
   }
   
-  # For HTTP::Cache::Transparent earlier than 0.4,
+  # For HTTP::Cache earlier than 0.4,
   # there is no Code in the cache.
   if( defined( $meta->{Code} ) ) {
     $res->code( $meta->{Code} );
@@ -491,7 +491,7 @@ sub _remove_old_entries {
     my @files = glob("*");
     foreach my $file (@files) {
       if( $file !~ m%^[0-9a-f]{32}$% ) {
-        print STDERR "HTTP::Cache::Transparent: Unknown file found in cache directory: $basepath$file\n";
+        print STDERR "HTTP::Cache: Unknown file found in cache directory: $basepath$file\n";
       }
       else {
 	  my $age = (-M $file);
@@ -511,7 +511,7 @@ sub _remove_old_entries {
 
 =head1 INSPECTING CACHE BEHAVIOR
 
-The HTTP::Cache::Transparent inserts two special headers in the
+The HTTP::Cache inserts two special headers in the
 HTTP::Response object. These can be accessed via the 
 HTTP::Response::header()-method.
 
@@ -568,7 +568,7 @@ wrong response.
 
 =item -
 
-HTTP::Cache::Transparent has not been tested with threads, and will
+HTTP::Cache has not been tested with threads, and will
 most likely not work if you use them.
 
 =back
@@ -608,7 +608,7 @@ at your option, any later version of Perl 5 you may have available.
 BEGIN {
   my %me = (dse => 1, dembry => 1);
   if ($me{$ENV{USER}} || $me{$ENV{LOGNAME}}) {
-    warn("This version of HTTP::Cache::Transparent has Honey Badger Superpowers!\n");
+    warn("This version of HTTP::Cache has Honey Badger Superpowers!\n");
   }
 }
 

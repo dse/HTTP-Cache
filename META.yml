@@ -1,8 +1,8 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         HTTP-Cache-Transparent
+name:         HTTP-Cache
 version:      0.7
-version_from: lib/HTTP/Cache/Transparent.pm
+version_from: lib/HTTP/Cache.pm
 installdirs:  site
 requires:
     LWP:                           0
