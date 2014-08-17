@@ -2,7 +2,7 @@ package HTTP::Cache;
 
 use strict;
 
-our $VERSION = '1.1';
+our $VERSION = '1.1.99';
 
 =head1 NAME
 
@@ -13,11 +13,17 @@ HTTP::Cache - Cache the result of http get-requests persistently.
   use LWP::Simple;
   use HTTP::Cache;
 
-  HTTP::Cache::init( {
+  my $cache = HTTP::Cache->new();
+  $cache->init( {
     BasePath => '/tmp/cache',
   } );
 
-  my $data = get( 'http://www.sn.no' );
+  my $ua = LWP::UserAgent->new();
+  $cache->apply($ua);
+
+  my $data = $ua->get( 'http://www.sn.no' );
+
+  $cache->unapply($ua);
 
 =head1 DESCRIPTION
 
@@ -29,8 +35,9 @@ between invocations.
 Uses the http-headers If-Modified-Since and ETag to let the server
 decide if the version in the cache is up-to-date or not.
 
-The cache is implemented by modifying the LWP::UserAgent class to
-seamlessly cache the result of all requests that can be cached.
+The cache is implemented by modifying individual LWP::UserAgent
+objects to seamlessly cache the result of all requests that can be
+cached.
 
 =head1 INITIALIZING THE CACHE
 
@@ -61,14 +68,6 @@ my @cache_headers = qw/Content-Type Content-Encoding
                        Content-Length Content-Range 
                        Last-Modified Date/;
 
-my $basepath;
-my $maxage;
-my $verbose;
-my $noupdate;
-my $noupdateimpatient;
-my $noupdateimpatientfudgefactor;
-my $approvecontent;
-
 my $org_simple_request;
 
 =item init
@@ -76,7 +75,7 @@ my $org_simple_request;
 Initialize the HTTP cache. Takes a single parameter which is a 
 hashref containing named arguments to the object.
 
-  HTTP::Cache::init( { 
+  $cache->init( { 
 
     # Directory to store the cache in. 
     BasePath  => "/tmp/cache", 
@@ -131,47 +130,53 @@ hashref containing named arguments to the object.
 The directory where the cache is stored must be writable. It must also only
 contain files created by HTTP::Cache.
 
-=cut 
+=cut
 
-my $initialized = 0;
+sub new {
+  my ($class) = @_;
+  my $self = bless({}, $class);
+  $self->{initialized} = 0;
+  return $self;
+}
+
 sub init {
-  my( $arg ) = @_;
+  my ($self, $arg) = @_;
 
   defined( $arg->{BasePath} ) 
     or croak( "You must specify a BasePath" ); 
 
-  $basepath = $arg->{BasePath};
+  $self->{basepath} = $arg->{BasePath};
 
-  if( not -d $basepath ) {
-    eval { mkpath($basepath) };
+  if( not -d $self->{basepath} ) {
+    eval { mkpath($self->{basepath}) };
     if ($@) {
-      print STDERR "$basepath is not a directory and cannot be created: $@\n";
+      print STDERR "$self->{basepath} is not a directory and cannot be created: $@\n";
       exit 1;
     }
   }
 
   # Append a trailing slash if it is missing.
-  $basepath =~ s%([^/])$%$1/%;
+  $self->{basepath} =~ s%([^/])$%$1/%;
 
-  $maxage = $arg->{MaxAge} || 8*24; 
-  $verbose = $arg->{Verbose} || 0;
-  $noupdate = $arg->{NoUpdate} || 0;
-  $noupdateimpatient = defined( $arg->{NoUpdateImpatient} )
+  $self->{maxage} = $arg->{MaxAge} || 8*24; 
+  $self->{verbose} = $arg->{Verbose} || 0;
+  $self->{noupdate} = $arg->{NoUpdate} || 0;
+  $self->{noupdateimpatient} = defined( $arg->{NoUpdateImpatient} )
     ? $arg->{NoUpdateImpatient} : 0;
-  $noupdateimpatientfudgefactor = defined( $arg->{NoUpdateImpatientFudgeFactor} )
+  $self->{noupdateimpatientfudgefactor} = defined( $arg->{NoUpdateImpatientFudgeFactor} )
     ? $arg->{NoUpdateImpatientFudgeFactor} : 2;
-  $approvecontent = $arg->{ApproveContent} || sub { return 1; };
+  $self->{approvecontent} = $arg->{ApproveContent} || sub { return 1; };
   
   # Make sure that LWP::Simple does not use its simplified
   # get-method that bypasses LWP::UserAgent. 
   $LWP::Simple::FULL_LWP++;
-  
-  unless ($initialized++) {
-  $org_simple_request = \&LWP::UserAgent::simple_request;
+}
 
-    no warnings;
-    *LWP::UserAgent::simple_request = \&_simple_request_cache
-  }
+sub apply {
+  my ($self, @obj) = @_;
+}
+sub unapply {
+  my ($self, @obj) = @_;
 }
 
 =item Initializing from use-line
@@ -209,149 +214,14 @@ sub import {
   HTTP::Cache::init( \%args );
 }
 
-END {
-  _remove_old_entries();
+sub DESTROY {
+  my ($self) = @_;
+  $self->_remove_old_entries();
 }
 
-sub _simple_request_cache {
-  my($self, $r, $content_cb, $read_size_hint) = @_;
-  
-  my $res;
-
-  if( $r->method eq "GET" and
-      not defined( $r->header( 'If-Modified-Since' ) ) and
-      not defined( $content_cb ) ) {
-    print STDERR "Fetching " . $r->uri
-      if( $verbose );
-    
-    my $url = $r->uri->as_string;
-    my $key = $url;
-    $key .= "\n" . $r->header('Range')
-      if defined $r->header('Range');
-
-    my $filename = $basepath . _urlhash( $url );
-
-    my $fh;
-    my $meta;
-
-    if( -s $filename ) {
-      $fh = new IO::File "< $filename"
-        or die "Failed to read from $filename";
-
-      $meta = _read_meta( $fh );
-      
-      if( $meta->{Url} eq $url ) {
-        $meta->{'Range'} = "" 
-          unless defined( $meta->{'Range'} );
-
-        # Check that the Range is the same for this request as 
-        # for the one in the cache.
-        if( (not defined( $r->header( 'Range' ) ) ) or
-            $r->header( 'Range' ) eq $meta->{'Range'} ) {
-          $r->header( 'If-Modified-Since', $meta->{'Last-Modified'} )
-            if exists( $meta->{'Last-Modified'} );
-          
-          $r->header( 'If-None-Match', $meta->{ETag} )
-            if( exists( $meta->{ETag} ) );
-        }
-      }
-      else {
-        warn "Cache collision: $url and $meta->{Url} have the same md5sum";
-      }
-    }
-
-    my $time = time;
-    my $dont_update = 0;
-    if ($noupdate) {
-      if ($noupdateimpatient) {
-	if (defined $meta->{'X-HCT-LastModified'}) {
-	  $dont_update = ($noupdate + $noupdateimpatientfudgefactor) > ($time - $meta->{'X-HCT-LastModified'});
-	} elsif (defined $meta->{'X-HCT-LastUpdated'}) {
-	  $dont_update = $noupdate > ($time - $meta->{'X-HCT-LastUpdated'});
-	}
-      }
-      else {
-	if (defined $meta->{'X-HCT-LastUpdated'}) {
-	  $dont_update = $noupdate > ($time - $meta->{'X-HCT-LastUpdated'});
-	}
-      }
-    }
-    
-    if ($dont_update) {
-      print STDERR " from cache without checking with server.\n"
-        if $verbose;
-
-      $res = HTTP::Response->new( $meta->{Code} );
-      $res->request($r);
-      _get_from_cachefile( $filename, $fh, $res, $meta );
-      $fh->close() 
-        if defined $fh;;
-
-      return $res;
-    }
-
-    $res = &$org_simple_request( $self, $r );
-
-    if( $res->code == RC_NOT_MODIFIED ) {
-      print STDERR " from cache.\n" 
-        if( $verbose );
-
-      _get_from_cachefile( $filename, $fh, $res, $meta );
-
-      $fh->close() 
-        if defined $fh;;
-
-      # We need to rewrite the cache-entry to update X-HCT-LastUpdated
-      _write_cache_entry( $filename, $url, $r, $res );
-      return $res;
-    }
-    elsif( defined( $meta->{'X-HCT-LastUpdated'} ) 
-	   and not &{$approvecontent}( $res ) ) {
-      print STDERR " from cache since the response was not approved.\n" 
-        if( $verbose );
-
-      _get_from_cachefile( $filename, $fh, $res, $meta );
-
-      $fh->close() 
-        if defined $fh;;
-
-      # Do NOT update the cache!
-
-      return $res;
-    }      
-    else {
-      $fh->close() 
-        if defined $fh;;
-
-      my $content = $res->content;
-      $content = "" if not defined $content;
-
-      if( defined( $meta->{MD5} ) and 
-                   md5_hex( $content ) eq $meta->{MD5} ) {
-        $res->header( "X-Content-Unchanged", 1 );
-        print STDERR " unchanged"
-          if( $verbose );
-      }
-
-      print STDERR " from server.\n"
-        if( $verbose );
-
-      _write_cache_entry( $filename, $url, $r, $res )
-        if( $res->code == RC_OK or
-            $res->code == RC_PARTIAL_CONTENT );
-    }
-  }
-  else {
-    # We won't try to cache this request. 
-    $res =  &$org_simple_request( $self, $r, 
-                                  $content_cb, $read_size_hint );
-  }
-
-  return $res;
-}
 
 sub _get_from_cachefile {
-  my( $filename, $fh, $res, $meta ) = @_;
+  my( $self, $filename, $fh, $res, $meta ) = @_;
 
   my $content;
   my $buf;
@@ -396,7 +266,7 @@ sub _get_from_cachefile {
 
 # Read metadata and position filehandle at start of data.
 sub _read_meta {
-  my( $fh ) = @_;
+  my( $self, $fh ) = @_;
   my %meta;
 
   my( $key, $value );
@@ -413,7 +283,7 @@ sub _read_meta {
 
 # Write metadata and position filehandle where data should be written.
 sub _write_meta {
-  my( $fh, $meta ) = @_;
+  my( $self, $fh, $meta ) = @_;
 
   foreach my $key (sort keys( %{$meta} ) ) {
     print $fh "$key $meta->{$key}\n";
@@ -423,7 +293,7 @@ sub _write_meta {
 }
 
 sub _write_cache_entry {
-  my( $filename, $url, $req, $res ) = @_;
+  my( $self, $filename, $url, $req, $res ) = @_;
 
   my $out_filename = "$filename.tmp$$";
   my $fh = new IO::File "> $out_filename"
@@ -469,7 +339,7 @@ sub _write_cache_entry {
       if defined $res->header( $h );
   }
 
-  _write_meta( $fh, $meta );
+  $self->_write_meta( $fh, $meta );
 
   print $fh $content;
   $fh->close;
@@ -478,28 +348,30 @@ sub _write_cache_entry {
 }
 
 sub _urlhash {
-  my( $url ) = @_;
+  my( $self, $url ) = @_;
 
   return md5_hex( $url );
 }
 
 sub _remove_old_entries {
-  if( defined( $basepath ) and -d( $basepath ) ) {
+  my( $self ) = @_;
+
+  if( defined( $self->{basepath} ) and -d( $self->{basepath} ) ) {
     my $oldcwd = getcwd();
-    chdir( $basepath );
+    chdir( $self->{basepath} );
 
     my @files = glob("*");
     foreach my $file (@files) {
       if( $file !~ m%^[0-9a-f]{32}$% ) {
-        print STDERR "HTTP::Cache: Unknown file found in cache directory: $basepath$file\n";
+        print STDERR "HTTP::Cache: Unknown file found in cache directory: $self->{basepath}$file\n";
       }
       else {
 	  my $age = (-M $file);
 	  # The file may have disappeared if another process has cleaned
 	  # the cache.
-	  if( defined($age) && ( $age*24 > $maxage ) ) {
+	  if( defined($age) && ( $age*24 > $self->{maxage} ) ) {
 	      print STDERR "Deleting $file.\n"
-		  if( $verbose );
+		  if( $self->{verbose} );
 	      unlink( $file );
 	  }
       }
@@ -613,6 +485,146 @@ BEGIN {
   if ($me{$ENV{USER}} || $me{$ENV{LOGNAME}}) {
     warn("This version of HTTP::Cache has Honey Badger Superpowers!\n");
   }
+}
+
+package LWP::UserAgent::HTTP::Cache;
+use warnings;
+use strict;
+use base "LWP::UserAgent";
+sub simple_request {
+  my($self, $r, $content_cb, $read_size_hint) = @_;
+  
+  my $res;
+
+  if( $r->method eq "GET" and
+      not defined( $r->header( 'If-Modified-Since' ) ) and
+      not defined( $content_cb ) ) {
+    print STDERR "Fetching " . $r->uri
+      if( $self->{verbose} );
+    
+    my $url = $r->uri->as_string;
+    my $key = $url;
+    $key .= "\n" . $r->header('Range')
+      if defined $r->header('Range');
+
+    my $filename = $self->{basepath} . $self->_urlhash( $url );
+
+    my $fh;
+    my $meta;
+
+    if( -s $filename ) {
+      $fh = new IO::File "< $filename"
+        or die "Failed to read from $filename";
+
+      $meta = $self->_read_meta( $fh );
+      
+      if( $meta->{Url} eq $url ) {
+        $meta->{'Range'} = "" 
+          unless defined( $meta->{'Range'} );
+
+        # Check that the Range is the same for this request as 
+        # for the one in the cache.
+        if( (not defined( $r->header( 'Range' ) ) ) or
+            $r->header( 'Range' ) eq $meta->{'Range'} ) {
+          $r->header( 'If-Modified-Since', $meta->{'Last-Modified'} )
+            if exists( $meta->{'Last-Modified'} );
+          
+          $r->header( 'If-None-Match', $meta->{ETag} )
+            if( exists( $meta->{ETag} ) );
+        }
+      }
+      else {
+        warn "Cache collision: $url and $meta->{Url} have the same md5sum";
+      }
+    }
+
+    my $time = time;
+    my $dont_update = 0;
+    if ($self->{noupdate}) {
+      if ($self->{noupdateimpatient}) {
+	if (defined $meta->{'X-HCT-LastModified'}) {
+	  $dont_update = ($self->{noupdate} + $self->{noupdateimpatientfudgefactor}) > ($time - $meta->{'X-HCT-LastModified'});
+	} elsif (defined $meta->{'X-HCT-LastUpdated'}) {
+	  $dont_update = $self->{noupdate} > ($time - $meta->{'X-HCT-LastUpdated'});
+	}
+      }
+      else {
+	if (defined $meta->{'X-HCT-LastUpdated'}) {
+	  $dont_update = $self->{noupdate} > ($time - $meta->{'X-HCT-LastUpdated'});
+	}
+      }
+    }
+    
+    if ($dont_update) {
+      print STDERR " from cache without checking with server.\n"
+        if $self->{verbose};
+
+      $res = HTTP::Response->new( $meta->{Code} );
+      $res->request($r);
+      $self->_get_from_cachefile( $filename, $fh, $res, $meta );
+      $fh->close() 
+        if defined $fh;;
+
+      return $res;
+    }
+
+    $res = $self->SUPER::simple_request($r);
+
+    if( $res->code == RC_NOT_MODIFIED ) {
+      print STDERR " from cache.\n" 
+        if( $self->{verbose} );
+
+      $self->_get_from_cachefile( $filename, $fh, $res, $meta );
+
+      $fh->close() 
+        if defined $fh;;
+
+      # We need to rewrite the cache-entry to update X-HCT-LastUpdated
+      $self->_write_cache_entry( $filename, $url, $r, $res );
+      return $res;
+    }
+    elsif( defined( $meta->{'X-HCT-LastUpdated'} ) 
+	   and not &{$self->{approvecontent}}( $res ) ) {
+      print STDERR " from cache since the response was not approved.\n" 
+        if( $self->{verbose} );
+
+      $self->_get_from_cachefile( $filename, $fh, $res, $meta );
+
+      $fh->close() 
+        if defined $fh;;
+
+      # Do NOT update the cache!
+
+      return $res;
+    }      
+    else {
+      $fh->close() 
+        if defined $fh;;
+
+      my $content = $res->content;
+      $content = "" if not defined $content;
+
+      if( defined( $meta->{MD5} ) and 
+                   md5_hex( $content ) eq $meta->{MD5} ) {
+        $res->header( "X-Content-Unchanged", 1 );
+        print STDERR " unchanged"
+          if( $self->{verbose} );
+      }
+
+      print STDERR " from server.\n"
+        if( $self->{verbose} );
+
+      $self->_write_cache_entry( $filename, $url, $r, $res )
+        if( $res->code == RC_OK or
+            $res->code == RC_PARTIAL_CONTENT );
+    }
+  }
+  else {
+    # We won't try to cache this request. 
+    $res = $self->SUPER::simple_request($r, $content_cb, $read_size_hint );
+  }
+
+  return $res;
 }
 
 1;
